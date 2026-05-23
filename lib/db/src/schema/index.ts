@@ -4,3 +4,4 @@ export * from "./projects";
 export * from "./tasks";
 export * from "./chat_messages";
 export * from "./activity";
+export * from "./auth";
