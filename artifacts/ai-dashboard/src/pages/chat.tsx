@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Bot, User, Trash2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/hooks/use-auth";
 
 type Message = {
   id: string;
@@ -8,10 +10,21 @@ type Message = {
   createdAt: string;
 };
 
+async function saveMessage(userId: string, role: "user" | "assistant", content: string) {
+  const { error } = await supabase.from("chat_messages").insert({
+    user_id: userId,
+    role,
+    content,
+  });
+  if (error) console.error("Failed to save message:", error.message);
+}
+
 export default function Chat() {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,11 +33,39 @@ export default function Chat() {
     }
   }, [messages, loading]);
 
+  const loadHistory = useCallback(async () => {
+    if (!user || historyLoaded) return;
+    const { data, error } = await supabase
+      .from("chat_messages")
+      .select("id, role, content, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(100);
+
+    if (error) {
+      console.error("Failed to load chat history:", error.message);
+    } else if (data) {
+      setMessages(
+        data.map((row) => ({
+          id: row.id as string,
+          role: row.role as "user" | "assistant",
+          content: row.content as string,
+          createdAt: row.created_at as string,
+        }))
+      );
+    }
+    setHistoryLoaded(true);
+  }, [user, historyLoaded]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
   const handleSend = async () => {
     if (!input.trim() || loading) return;
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       role: "user",
       content: input.trim(),
       createdAt: new Date().toISOString(),
@@ -34,6 +75,10 @@ export default function Chat() {
     setMessages(updatedMessages);
     setInput("");
     setLoading(true);
+
+    if (user) {
+      await saveMessage(user.id, "user", userMessage.content);
+    }
 
     try {
       const response = await fetch("/api/chat", {
@@ -51,28 +96,39 @@ export default function Chat() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const data = await response.json();
+      const assistantMessage: Message = {
+        id: data.id || crypto.randomUUID(),
+        role: "assistant",
+        content: data.content || "No response from AI",
+        createdAt: data.createdAt || new Date().toISOString(),
+      };
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: data.id || Date.now().toString(),
-          role: "assistant",
-          content: data.content || "No response from AI",
-          createdAt: data.createdAt || new Date().toISOString(),
-        },
-      ]);
+      setMessages((prev) => [...prev, assistantMessage]);
+
+      if (user) {
+        await saveMessage(user.id, "assistant", assistantMessage.content);
+      }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: "assistant",
-          content: "Something went wrong. Please try again.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      const errorMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "Something went wrong. Please try again.",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClear = async () => {
+    setMessages([]);
+    if (user) {
+      const { error } = await supabase
+        .from("chat_messages")
+        .delete()
+        .eq("user_id", user.id);
+      if (error) console.error("Failed to clear chat history:", error.message);
     }
   };
 
@@ -86,7 +142,7 @@ export default function Chat() {
         {messages.length > 0 && (
           <button
             data-testid="button-clear-chat"
-            onClick={() => setMessages([])}
+            onClick={handleClear}
             className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-2 rounded-md hover:bg-muted"
           >
             <Trash2 className="w-3.5 h-3.5" />

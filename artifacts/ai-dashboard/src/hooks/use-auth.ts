@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 
 export type AuthUser = {
   id: string;
@@ -12,8 +14,22 @@ interface AuthState {
   user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: () => void;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<{ error: string | null }>;
+  signUp: (email: string, password: string) => Promise<{ error: string | null }>;
+  logout: () => Promise<void>;
+}
+
+function toAuthUser(user: User): AuthUser {
+  const meta = user.user_metadata ?? {};
+  const fullName: string = meta.full_name ?? meta.name ?? "";
+  const parts = fullName.trim().split(/\s+/);
+  return {
+    id: user.id,
+    email: user.email ?? null,
+    firstName: parts[0] || null,
+    lastName: parts.length > 1 ? parts.slice(1).join(" ") : null,
+    profileImageUrl: meta.avatar_url ?? meta.picture ?? null,
+  };
 }
 
 export function useAuth(): AuthState {
@@ -21,38 +37,33 @@ export function useAuth(): AuthState {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ? toAuthUser(data.session.user) : null);
+      setIsLoading(false);
+    });
 
-    fetch("/api/auth/user", { credentials: "include" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ user: AuthUser | null }>;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setUser(data.user ?? null);
-          setIsLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUser(null);
-          setIsLoading(false);
-        }
-      });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ? toAuthUser(session.user) : null);
+      setIsLoading(false);
+    });
 
     return () => {
-      cancelled = true;
+      listener.subscription.unsubscribe();
     };
   }, []);
 
-  const login = useCallback(() => {
-    const base = import.meta.env.BASE_URL.replace(/\/+$/, "") || "/";
-    window.location.href = `/api/login?returnTo=${encodeURIComponent(base)}`;
+  const login = useCallback(async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
   }, []);
 
-  const logout = useCallback(() => {
-    window.location.href = "/api/logout";
+  const signUp = useCallback(async (email: string, password: string) => {
+    const { error } = await supabase.auth.signUp({ email, password });
+    return { error: error?.message ?? null };
+  }, []);
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
   }, []);
 
   return {
@@ -60,6 +71,7 @@ export function useAuth(): AuthState {
     isLoading,
     isAuthenticated: !!user,
     login,
+    signUp,
     logout,
   };
 }

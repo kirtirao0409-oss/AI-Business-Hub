@@ -68,7 +68,7 @@ export function Sidebar() {
           </div>
           <button
             data-testid="button-logout"
-            onClick={logout}
+            onClick={() => void logout()}
             title="Log out"
             className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
           >
