@@ -15,6 +15,6 @@ router.use(leadsRouter);
 router.use(candidatesRouter);
 router.use(projectsRouter);
 router.use(tasksRouter);
-router.use(chatRouter);
+router.use("/chat", chatRouter);
 
 export default router;
